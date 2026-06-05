@@ -1,0 +1,12 @@
+# Normaliza los fines de línea a LF en el repositorio (consistencia con CI).
+* text=auto eol=lf
+
+# Archivos binarios (no tocar)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary

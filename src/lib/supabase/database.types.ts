@@ -44,7 +44,8 @@ export type Database = {
         | "budget_approved"
         | "client_approved"
         | "execution_enabled"
-        | "expense_logged";
+        | "expense_logged"
+        | "expense_over_budget";
       budget_event_type: "status_change" | "margin_applied" | "expense_logged" | "comment";
     };
   };

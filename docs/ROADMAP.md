@@ -9,6 +9,8 @@ backend (Supabase) para reutilizar el mismo backend en la futura app nativa.
 - Esquema de base de datos con RLS, auditoría y notificaciones.
 - Capa de dominio (roles + máquina de estados del pipeline).
 - CI (lint + typecheck + build), PWA manifest, documentación.
+- **Muestras tempranas:** PDF de presupuesto (`/api/pdf/demo`) y dashboard de
+  administración con datos de ejemplo (`/admin`).
 - **Pendiente de infra:** provisionar Supabase, conectar Vercel, configurar
   variables de entorno y Resend.
 

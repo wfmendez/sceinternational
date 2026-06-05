@@ -35,6 +35,24 @@ export default function Home() {
         </ol>
       </section>
 
+      <section className="space-y-3">
+        <h2 className="text-sm font-medium text-slate-500">Vistas de muestra</h2>
+        <div className="flex flex-wrap gap-3">
+          <a
+            href="/admin"
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium transition-colors hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900"
+          >
+            Dashboard de administración →
+          </a>
+          <a
+            href="/api/pdf/demo"
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium transition-colors hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900"
+          >
+            Presupuesto PDF (demo) →
+          </a>
+        </div>
+      </section>
+
       <footer className="text-xs text-slate-400">
         Fase 0 · Cimientos · Next.js · Supabase · Vercel
       </footer>

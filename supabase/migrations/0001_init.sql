@@ -39,7 +39,8 @@ create type public.notification_type as enum (
   'budget_approved',
   'client_approved',
   'execution_enabled',
-  'expense_logged'
+  'expense_logged',
+  'expense_over_budget'
 );
 
 create type public.budget_event_type as enum (
@@ -186,7 +187,9 @@ create table public.budgets (
   status                   public.budget_status not null default 'draft',
   created_by               uuid not null references public.profiles (id),
   client_id                uuid references public.clients (id),
-  currency                 text not null default 'USD',
+  currency                 text not null default 'USD' check (currency in ('USD', 'VES')),
+  -- Tasa USD→VES del día (opcional; para equivalencias a futuro, sin complicar).
+  exchange_rate            numeric(18, 6),
   -- Costo base (dominio del trabajador): suma de los ítems.
   base_total               numeric(14, 2) not null default 0,
   -- Techo de gasto aprobado para la ejecución (por defecto = costo base).
@@ -395,6 +398,25 @@ left join public.expenses e on e.budget_id = b.id
 group by b.id;
 
 -- ---------------------------------------------------------------------------
+-- budget_profit: ganancia por presupuesto (precio cliente − costo base).
+-- INNER JOIN a budget_pricing => con security_invoker, el trabajador no ve
+-- ninguna fila (no tiene acceso a budget_pricing). Alimenta el dashboard admin.
+-- ---------------------------------------------------------------------------
+create view public.budget_profit
+with (security_invoker = on) as
+select
+  b.id         as budget_id,
+  b.code,
+  b.created_by,
+  b.currency,
+  b.base_total,
+  p.margin_pct,
+  p.client_total,
+  (p.client_total - b.base_total) as profit
+from public.budgets b
+join public.budget_pricing p on p.budget_id = b.id;
+
+-- ---------------------------------------------------------------------------
 -- notifications: notificaciones internas (la copia por email la envía la app)
 -- ---------------------------------------------------------------------------
 create table public.notifications (
@@ -471,4 +493,5 @@ create policy "budget_events: insertar sobre presupuesto accesible"
 grant usage on schema public to anon, authenticated;
 grant select, insert, update, delete on all tables in schema public to authenticated;
 grant select on public.budget_balances to authenticated;
+grant select on public.budget_profit to authenticated;
 grant usage, select on all sequences in schema public to authenticated;

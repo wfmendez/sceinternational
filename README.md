@@ -21,6 +21,7 @@ en la futura app nativa (Expo / React Native).
 
 ## Documentación
 
+- [`docs/ONBOARDING.md`](docs/ONBOARDING.md) — **empieza aquí** si te incorporas: accesos, contexto y herramientas de IA.
 - [`docs/MODELO-DOMINIO.md`](docs/MODELO-DOMINIO.md) — roles, pipeline y reglas de negocio.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — fases del MVP.
 - [`supabase/README.md`](supabase/README.md) — cómo aplicar el esquema.

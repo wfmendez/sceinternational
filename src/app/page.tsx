@@ -1,61 +1,16 @@
-import { BUDGET_PIPELINE, BUDGET_STATUS_LABELS } from "@/lib/domain/budget-status";
+import { redirect } from "next/navigation";
 
-export default function Home() {
-  return (
-    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center gap-12 px-6 py-16">
-      <header className="space-y-3">
-        <p className="text-xs font-medium uppercase tracking-[0.2em] text-slate-500">
-          SCE International
-        </p>
-        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-          Panel de Presupuestos
-        </h1>
-        <p className="max-w-prose text-pretty text-slate-600 dark:text-slate-400">
-          Plataforma interna para crear, aprobar y ejecutar presupuestos, con
-          control de gastos en tiempo real y notificaciones. MVP en construcción.
-        </p>
-      </header>
+import { createClient } from "@/lib/supabase/server";
 
-      <section className="space-y-4">
-        <h2 className="text-sm font-medium text-slate-500">
-          Flujo de aprobación (pipeline)
-        </h2>
-        <ol className="flex flex-wrap items-center gap-2">
-          {BUDGET_PIPELINE.map((status, index) => (
-            <li
-              key={status}
-              className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
-            >
-              <span className="grid size-5 place-items-center rounded-full bg-slate-900 text-[11px] font-semibold text-white dark:bg-white dark:text-slate-900">
-                {index + 1}
-              </span>
-              {BUDGET_STATUS_LABELS[status]}
-            </li>
-          ))}
-        </ol>
-      </section>
+export default async function RootPage() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-medium text-slate-500">Vistas de muestra</h2>
-        <div className="flex flex-wrap gap-3">
-          <a
-            href="/admin"
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium transition-colors hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900"
-          >
-            Dashboard de administración →
-          </a>
-          <a
-            href="/api/pdf/demo"
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium transition-colors hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900"
-          >
-            Presupuesto PDF (demo) →
-          </a>
-        </div>
-      </section>
-
-      <footer className="text-xs text-slate-400">
-        Fase 0 · Cimientos · Next.js · Supabase · Vercel
-      </footer>
-    </main>
-  );
+  if (user) {
+    redirect("/panel/presupuestos");
+  } else {
+    redirect("/login");
+  }
 }

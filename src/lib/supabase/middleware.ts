@@ -38,10 +38,33 @@ export async function updateSession(request: NextRequest) {
 
   // No insertar lógica entre createServerClient y getUser(): evita cierres de
   // sesión difíciles de depurar.
-  await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  // La protección de rutas (redirigir a /login a los no autenticados) se
-  // añadirá en la Fase 1, cuando existan las páginas de autenticación.
+  const { pathname } = request.nextUrl;
+
+  const isPublic =
+    pathname === "/" ||
+    pathname.startsWith("/login") ||
+    pathname.startsWith("/api/pdf/demo") ||
+    pathname.startsWith("/_next") ||
+    pathname.startsWith("/favicon") ||
+    pathname.startsWith("/manifest");
+
+  // Sin sesión → redirigir a /login (excepto rutas públicas)
+  if (!user && !isPublic) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/login";
+    return NextResponse.redirect(url);
+  }
+
+  // Con sesión → redirigir desde /login al panel
+  if (user && pathname === "/login") {
+    const url = request.nextUrl.clone();
+    url.pathname = "/panel/presupuestos";
+    return NextResponse.redirect(url);
+  }
 
   return supabaseResponse;
 }

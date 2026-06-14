@@ -8,37 +8,35 @@ import {
   type BudgetStatus,
   type BudgetTransition,
 } from "@/lib/domain/budget-status";
+import type { Currency } from "@/lib/domain/currency";
 import type { UserRole } from "@/lib/domain/roles";
+import MarginForm from "./margin-form";
 
 interface TransitionActionsProps {
   budgetId: string;
   status: BudgetStatus;
   role: UserRole;
+  /** Necesario para mostrar el formulario de margen. */
+  baseTotal?: number;
+  currency?: Currency;
 }
 
 const TONE_CLASSES: Record<string, string> = {
-  "Enviar a Administración":
-    "bg-blue-600 text-white hover:bg-blue-500",
-  "Reenviar a Administración":
-    "bg-blue-600 text-white hover:bg-blue-500",
-  "Validar y aplicar margen":
-    "bg-green-600 text-white hover:bg-green-500",
-  "Enviar a Gerencia":
-    "bg-blue-600 text-white hover:bg-blue-500",
-  "Aprobar y enviar al cliente":
-    "bg-green-600 text-white hover:bg-green-500",
+  "Enviar a Administración": "bg-blue-600 text-white hover:bg-blue-500",
+  "Reenviar a Administración": "bg-blue-600 text-white hover:bg-blue-500",
+  "Validar y aplicar margen": "bg-green-600 text-white hover:bg-green-500",
+  "Enviar a Gerencia": "bg-blue-600 text-white hover:bg-blue-500",
+  "Aprobar y enviar al cliente": "bg-green-600 text-white hover:bg-green-500",
   "Marcar aprobación del cliente":
     "bg-green-600 text-white hover:bg-green-500",
   "Habilitar ejecución de gastos":
     "bg-green-600 text-white hover:bg-green-500",
-  "Cerrar presupuesto":
-    "bg-slate-700 text-white hover:bg-slate-600",
+  "Cerrar presupuesto": "bg-slate-700 text-white hover:bg-slate-600",
   "Devolver al trabajador":
     "border border-amber-400 text-amber-700 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-900/20",
   "Devolver a Administración":
     "border border-amber-400 text-amber-700 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-900/20",
-  "Reajustar y reenviar":
-    "bg-blue-600 text-white hover:bg-blue-500",
+  "Reajustar y reenviar": "bg-blue-600 text-white hover:bg-blue-500",
 };
 
 function ActionButton({
@@ -132,21 +130,57 @@ export default function TransitionActions({
   budgetId,
   status,
   role,
+  baseTotal = 0,
+  currency = "USD",
 }: TransitionActionsProps) {
   const transitions = allowedTransitions(status, role);
+  const [showMarginForm, setShowMarginForm] = useState(false);
 
   if (!transitions.length) return null;
+
+  // Separar la transición de validar margen del resto
+  const validateTransition = transitions.find(
+    (t) => t.to === "validated_with_margin",
+  );
+  const otherTransitions = transitions.filter(
+    (t) => t.to !== "validated_with_margin",
+  );
 
   return (
     <div className="space-y-3">
       <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300">
         Acciones disponibles
       </h3>
-      <div className="flex flex-wrap gap-3">
-        {transitions.map((t) => (
-          <ActionButton key={t.to} transition={t} budgetId={budgetId} />
-        ))}
-      </div>
+
+      {/* Formulario de margen (expansible) */}
+      {validateTransition && (
+        <div>
+          {showMarginForm ? (
+            <MarginForm
+              budgetId={budgetId}
+              baseTotal={baseTotal}
+              currency={currency}
+              onCancel={() => setShowMarginForm(false)}
+            />
+          ) : (
+            <button
+              onClick={() => setShowMarginForm(true)}
+              className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${TONE_CLASSES[validateTransition.action] ?? "bg-green-600 text-white hover:bg-green-500"}`}
+            >
+              {validateTransition.action}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Resto de transiciones */}
+      {otherTransitions.length > 0 && (
+        <div className="flex flex-wrap gap-3">
+          {otherTransitions.map((t) => (
+            <ActionButton key={t.to} transition={t} budgetId={budgetId} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -26,6 +26,11 @@ const FormSchema = z.object({
   description: z.string().optional(),
   currency: z.enum(["USD", "VES"]),
   client_name: z.string().optional(),
+  client_email: z
+    .string()
+    .email("Email inválido")
+    .optional()
+    .or(z.literal("")),
   items: z.array(ItemSchema).min(1, "Agrega al menos un ítem"),
 });
 
@@ -47,6 +52,7 @@ export default function BudgetForm({ budgetId, defaultValues }: BudgetFormProps)
       description: "",
       currency: "USD",
       client_name: "",
+      client_email: "",
       items: [{ description: "", quantity: 1, unit_cost: 0, unit: "" }],
       ...defaultValues,
     },
@@ -104,8 +110,8 @@ export default function BudgetForm({ budgetId, defaultValues }: BudgetFormProps)
           Información general
         </h2>
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="sm:col-span-2">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="sm:col-span-2 lg:col-span-3">
             <label className="mb-1.5 block text-sm font-medium">
               Título <span className="text-red-500">*</span>
             </label>
@@ -133,6 +139,23 @@ export default function BudgetForm({ budgetId, defaultValues }: BudgetFormProps)
           </div>
 
           <div>
+            <label className="mb-1.5 block text-sm font-medium">
+              Correo del cliente (para envío automático)
+            </label>
+            <input
+              {...form.register("client_email")}
+              type="email"
+              className={inputClass}
+              placeholder="cliente@empresa.com"
+            />
+            {form.formState.errors.client_email && (
+              <p className="mt-1 text-xs text-red-600">
+                {form.formState.errors.client_email.message}
+              </p>
+            )}
+          </div>
+
+          <div>
             <label className="mb-1.5 block text-sm font-medium">Moneda</label>
             <select {...form.register("currency")} className={inputClass}>
               {(Object.keys(CURRENCY_LABELS) as Currency[]).map((c) => (
@@ -143,7 +166,7 @@ export default function BudgetForm({ budgetId, defaultValues }: BudgetFormProps)
             </select>
           </div>
 
-          <div className="sm:col-span-2">
+          <div className="sm:col-span-2 lg:col-span-3">
             <label className="mb-1.5 block text-sm font-medium">
               Descripción (opcional)
             </label>

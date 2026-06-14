@@ -8,9 +8,21 @@ import {
   BUDGET_STATUS_LABELS,
   type BudgetStatus,
 } from "@/lib/domain/budget-status";
-import type { UserRole } from "@/lib/domain/roles";
+import type { Currency } from "@/lib/domain/currency";
+import { isPrivileged, type UserRole } from "@/lib/domain/roles";
 import { createClient } from "@/lib/supabase/server";
 import { formatMoney } from "@/lib/utils";
+
+/** Estados donde ya existe `budget_pricing` con datos reales. */
+const PRICED_STATUSES: BudgetStatus[] = [
+  "validated_with_margin",
+  "pending_manager_approval",
+  "returned_by_manager",
+  "approved_sent_to_client",
+  "client_approved",
+  "in_execution",
+  "closed",
+];
 
 export const metadata: Metadata = { title: "Detalle del presupuesto" };
 
@@ -50,7 +62,8 @@ export default async function PresupuestoDetailPage({
       creator:profiles!budgets_created_by_fkey(full_name),
       client:clients!budgets_client_id_fkey(name),
       items:budget_items(id, description, quantity, unit_cost, unit, line_total, sort_order),
-      events:budget_events(id, event_type, from_status, to_status, comment, created_at, actor:profiles!budget_events_actor_id_fkey(full_name))
+      events:budget_events(id, event_type, from_status, to_status, comment, created_at, actor:profiles!budget_events_actor_id_fkey(full_name)),
+      pricing:budget_pricing(client_total, margin_pct)
     `,
     )
     .eq("id", id)
@@ -67,7 +80,7 @@ export default async function PresupuestoDetailPage({
   );
 
   const status = budget.status as BudgetStatus;
-  const currency = budget.currency as "USD" | "VES";
+  const currency = budget.currency as Currency;
   const isEditable =
     (status === "draft" || status === "returned_to_worker") &&
     budget.created_by === user.id;
@@ -76,6 +89,19 @@ export default async function PresupuestoDetailPage({
     (budget.creator as { full_name: string } | null)?.full_name ?? "—";
   const clientName =
     (budget.client as { name: string } | null)?.name ?? null;
+
+  // Precio al cliente (solo admin/manager, solo cuando existe pricing)
+  const pricingArr = budget.pricing as
+    | { client_total: number; margin_pct: number }[]
+    | null;
+  const pricing = pricingArr?.[0] ?? null;
+  const showPricing =
+    isPrivileged(profile.role as UserRole) &&
+    PRICED_STATUSES.includes(status) &&
+    pricing !== null;
+
+  const showPdfButton =
+    isPrivileged(profile.role as UserRole) && PRICED_STATUSES.includes(status);
 
   return (
     <div className="p-6 sm:p-8">
@@ -116,14 +142,26 @@ export default async function PresupuestoDetailPage({
           </div>
           <div className="flex shrink-0 flex-col items-end gap-2">
             <StatusBadge status={status} />
-            {isEditable && (
-              <Link
-                href={`/panel/presupuestos/${id}/editar`}
-                className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
-              >
-                Editar
-              </Link>
-            )}
+            <div className="flex gap-2">
+              {isEditable && (
+                <Link
+                  href={`/panel/presupuestos/${id}/editar`}
+                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+                >
+                  Editar
+                </Link>
+              )}
+              {showPdfButton && (
+                <a
+                  href={`/api/pdf/${id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+                >
+                  Descargar PDF
+                </a>
+              )}
+            </div>
           </div>
         </div>
 
@@ -178,17 +216,47 @@ export default async function PresupuestoDetailPage({
                 ))}
               </tbody>
               <tfoot>
-                <tr className="border-t-2 border-slate-200 dark:border-slate-700">
+                <tr className="border-t border-slate-200 dark:border-slate-700">
                   <td
                     colSpan={4}
-                    className="px-4 py-3 text-right text-sm font-semibold"
+                    className="px-4 py-3 text-right text-sm text-slate-500"
                   >
-                    Total estimado
+                    Costo base
                   </td>
-                  <td className="px-3 py-3 text-right text-sm font-semibold">
+                  <td className="px-3 py-3 text-right text-sm text-slate-500">
                     {formatMoney(budget.base_total, currency)}
                   </td>
                 </tr>
+                {showPricing && pricing && (
+                  <>
+                    <tr>
+                      <td
+                        colSpan={4}
+                        className="px-4 py-1.5 text-right text-xs text-slate-400"
+                      >
+                        Margen ({pricing.margin_pct.toFixed(1)}&thinsp;%)
+                      </td>
+                      <td className="px-3 py-1.5 text-right text-xs text-slate-400">
+                        +
+                        {formatMoney(
+                          pricing.client_total - budget.base_total,
+                          currency,
+                        )}
+                      </td>
+                    </tr>
+                    <tr className="border-t-2 border-slate-200 dark:border-slate-700">
+                      <td
+                        colSpan={4}
+                        className="px-4 py-3 text-right text-sm font-semibold text-green-700 dark:text-green-400"
+                      >
+                        Precio al cliente
+                      </td>
+                      <td className="px-3 py-3 text-right text-sm font-semibold text-green-700 dark:text-green-400">
+                        {formatMoney(pricing.client_total, currency)}
+                      </td>
+                    </tr>
+                  </>
+                )}
               </tfoot>
             </table>
           </div>
@@ -199,6 +267,8 @@ export default async function PresupuestoDetailPage({
           budgetId={id}
           status={status}
           role={profile.role as UserRole}
+          baseTotal={budget.base_total}
+          currency={currency}
         />
 
         {/* Bitácora de eventos */}

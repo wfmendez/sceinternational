@@ -8,6 +8,8 @@ import {
   canTransition,
   type BudgetStatus,
 } from "@/lib/domain/budget-status";
+import { sendBudgetEmail } from "@/lib/email/send-budget-email";
+import { renderBudgetPdfById } from "@/lib/pdf/render-budget-pdf";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { Database, TablesUpdate } from "@/lib/supabase/database.types";
@@ -26,6 +28,11 @@ const CreateBudgetSchema = z.object({
   description: z.string().optional(),
   currency: z.enum(["USD", "VES"]),
   client_name: z.string().optional(),
+  client_email: z
+    .string()
+    .email("Email inválido")
+    .optional()
+    .or(z.literal("")),
   items: z.array(ItemSchema).min(1, "Agrega al menos un ítem"),
 });
 
@@ -114,13 +121,18 @@ export async function createBudget(
   const parsed = CreateBudgetSchema.safeParse(input);
   if (!parsed.success) return { error: "Datos inválidos" };
 
-  const { title, description, currency, client_name, items } = parsed.data;
+  const { title, description, currency, client_name, client_email, items } =
+    parsed.data;
 
   let client_id: string | null = null;
   if (client_name?.trim()) {
     const { data: client } = await supabase
       .from("clients")
-      .insert({ name: client_name.trim(), created_by: user.id })
+      .insert({
+        name: client_name.trim(),
+        contact_email: client_email?.trim() || null,
+        created_by: user.id,
+      })
       .select("id")
       .single();
     client_id = client?.id ?? null;
@@ -256,7 +268,7 @@ export async function transitionBudget(
 
   const { data: budget } = await supabase
     .from("budgets")
-    .select("status, created_by, title, base_total")
+    .select("status, created_by, title, base_total, currency")
     .eq("id", budgetId)
     .single();
   if (!budget) return { error: "Presupuesto no encontrado" };
@@ -284,21 +296,6 @@ export async function transitionBudget(
     .eq("id", budgetId);
   if (updateError) return { error: updateError.message };
 
-  // Si se valida, crear entrada de budget_pricing con margen 0 (Fase 2 añade el input)
-  if (toStatus === "validated_with_margin") {
-    await supabase
-      .from("budget_pricing")
-      .upsert(
-        {
-          budget_id: budgetId,
-          margin_pct: 0,
-          client_total: budget.base_total,
-          updated_by: user.id,
-        },
-        { onConflict: "budget_id" },
-      );
-  }
-
   // Registro de auditoría
   await supabase.from("budget_events").insert({
     budget_id: budgetId,
@@ -311,6 +308,128 @@ export async function transitionBudget(
 
   // Notificaciones in-app
   await notifyTransition(budgetId, budget.title, budget.created_by, toStatus);
+
+  // Correo al cliente cuando el presupuesto es aprobado y enviado
+  if (toStatus === "approved_sent_to_client") {
+    try {
+      const { data: clientRow } = await supabase
+        .from("budgets")
+        .select("client:clients!budgets_client_id_fkey(name, contact_email)")
+        .eq("id", budgetId)
+        .single();
+
+      const client = clientRow?.client as
+        | { name: string; contact_email: string | null }
+        | null;
+
+      if (client?.contact_email) {
+        const pricingResult = await renderBudgetPdfById(supabase, budgetId);
+        if (pricingResult) {
+          // Obtener precio al cliente desde budget_pricing
+          const { data: pricingData } = await supabase
+            .from("budget_pricing")
+            .select("client_total")
+            .eq("budget_id", budgetId)
+            .single();
+
+          await sendBudgetEmail({
+            to: client.contact_email,
+            budgetCode: budget.title, // se sobreescribe abajo si hay code
+            budgetTitle: budget.title,
+            clientName: client.name,
+            currency: budget.currency as "USD" | "VES",
+            clientTotal: pricingData?.client_total ?? budget.base_total,
+            pdfBuffer: pricingResult.buffer,
+          });
+        }
+      }
+    } catch {
+      // El correo no bloquea la transición
+    }
+  }
+
+  revalidatePath("/panel/presupuestos");
+  revalidatePath(`/panel/presupuestos/${budgetId}`);
+  return {};
+}
+
+// ─── Validar con margen (Fase 2) ─────────────────────────────────────────────
+
+export async function validateBudgetWithMargin(
+  budgetId: string,
+  marginPct: number,
+): Promise<{ error?: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "No autenticado" };
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  if (!profile) return { error: "Perfil no encontrado" };
+
+  if (typeof marginPct !== "number" || marginPct < 0 || marginPct > 200) {
+    return { error: "Margen inválido (0–200 %)" };
+  }
+
+  const { data: budget } = await supabase
+    .from("budgets")
+    .select("status, created_by, title, base_total")
+    .eq("id", budgetId)
+    .single();
+  if (!budget) return { error: "Presupuesto no encontrado" };
+
+  if (
+    !canTransition(
+      budget.status as BudgetStatus,
+      "validated_with_margin",
+      profile.role,
+    )
+  ) {
+    return { error: "Esta transición no está permitida para tu rol" };
+  }
+
+  const clientTotal =
+    Math.round(budget.base_total * (1 + marginPct / 100) * 100) / 100;
+
+  await supabase.from("budget_pricing").upsert(
+    {
+      budget_id: budgetId,
+      margin_pct: marginPct,
+      client_total: clientTotal,
+      updated_by: user.id,
+    },
+    { onConflict: "budget_id" },
+  );
+
+  const { error: updateError } = await supabase
+    .from("budgets")
+    .update({
+      status: "validated_with_margin",
+      validated_at: new Date().toISOString(),
+    })
+    .eq("id", budgetId);
+  if (updateError) return { error: updateError.message };
+
+  await supabase.from("budget_events").insert({
+    budget_id: budgetId,
+    actor_id: user.id,
+    event_type: "status_change",
+    from_status: budget.status,
+    to_status: "validated_with_margin",
+    comment: `Margen aplicado: ${marginPct.toFixed(1)}%`,
+  });
+
+  await notifyTransition(
+    budgetId,
+    budget.title,
+    budget.created_by,
+    "validated_with_margin",
+  );
 
   revalidatePath("/panel/presupuestos");
   revalidatePath(`/panel/presupuestos/${budgetId}`);

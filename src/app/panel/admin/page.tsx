@@ -1,43 +1,14 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { StatusBadge } from "@/components/ui/badge";
 import { MetricCard } from "@/components/ui/metric-card";
-import { BUDGET_STATUS, type BudgetStatus } from "@/lib/domain/budget-status";
+import { BUDGET_STATUS_LABELS, type BudgetStatus } from "@/lib/domain/budget-status";
 import { createClient } from "@/lib/supabase/server";
 import { formatMoney } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Administración" };
-
-const METRICS = {
-  monthProfit: 12480,
-  monthRevenue: 58300,
-  avgMargin: 27.4,
-  activeBudgets: 14,
-  pendingReview: 3,
-  monthExpenses: 9120,
-};
-
-const PER_WORKER = [
-  { name: "Carlos Rivas", budgets: 6, approved: 22400, expenses: 8100, profit: 5260 },
-  { name: "Luisa Marcano", budgets: 4, approved: 15800, expenses: 1020, profit: 4115 },
-  { name: "Jhonny Bravo", budgets: 3, approved: 9600, expenses: 0, profit: 2480 },
-  { name: "Andrea Sosa", budgets: 1, approved: 3200, expenses: 0, profit: 625 },
-];
-
-const RECENT: {
-  code: string;
-  title: string;
-  worker: string;
-  status: BudgetStatus;
-  total: number;
-}[] = [
-  { code: "PRE-2026-0014", title: "Remodelación de cocina — El Hatillo", worker: "Carlos Rivas", status: BUDGET_STATUS.PENDING_ADMIN_REVIEW, total: 7800 },
-  { code: "PRE-2026-0013", title: "Paisajismo y riego — La Lagunita", worker: "Luisa Marcano", status: BUDGET_STATUS.IN_EXECUTION, total: 5240 },
-  { code: "PRE-2026-0012", title: "Impermeabilización de terraza", worker: "Jhonny Bravo", status: BUDGET_STATUS.PENDING_MANAGER_APPROVAL, total: 2100 },
-  { code: "PRE-2026-0011", title: "Mantenimiento de jardín (trimestral)", worker: "Andrea Sosa", status: BUDGET_STATUS.CLIENT_APPROVED, total: 3200 },
-  { code: "PRE-2026-0010", title: "Reparación de fachada y pintura", worker: "Carlos Rivas", status: BUDGET_STATUS.RETURNED_TO_WORKER, total: 4600 },
-];
 
 export default async function AdminDashboardPage() {
   const supabase = await createClient();
@@ -55,118 +26,174 @@ export default async function AdminDashboardPage() {
     redirect("/panel/presupuestos");
   }
 
+  // ── Métricas globales ────────────────────────────────────────────────────
+  const [
+    { data: profits },
+    { data: balances },
+    { data: budgetCounts },
+    { data: recentBudgets },
+  ] = await Promise.all([
+    // Ganancia por presupuesto (solo los que tienen pricing)
+    supabase.from("budget_profit").select("profit, client_total, base_total, margin_pct"),
+    // Balance por presupuesto en ejecución
+    supabase.from("budget_balances").select("total_expenses, remaining_amount"),
+    // Conteo por estado
+    supabase.from("budgets").select("status"),
+    // Presupuestos recientes con info de creador y cliente
+    supabase
+      .from("budgets")
+      .select(
+        "id, code, title, status, base_total, currency, updated_at, creator:profiles!budgets_created_by_fkey(full_name)",
+      )
+      .order("updated_at", { ascending: false })
+      .limit(8),
+  ]);
+
+  const totalProfit = (profits ?? []).reduce((s, p) => s + (p.profit ?? 0), 0);
+  const totalRevenue = (profits ?? []).reduce((s, p) => s + (p.client_total ?? 0), 0);
+  const avgMargin =
+    (profits ?? []).length > 0
+      ? (profits ?? []).reduce((s, p) => s + (p.margin_pct ?? 0), 0) /
+        (profits ?? []).length
+      : 0;
+  const totalExpenses = (balances ?? []).reduce(
+    (s, b) => s + (b.total_expenses ?? 0),
+    0,
+  );
+
+  const statusCounts = (budgetCounts ?? []).reduce<Record<string, number>>(
+    (acc, b) => ({ ...acc, [b.status]: (acc[b.status] ?? 0) + 1 }),
+    {},
+  );
+  const pendingReview = statusCounts["pending_admin_review"] ?? 0;
+  const pendingManager = statusCounts["pending_manager_approval"] ?? 0;
+  const inExecution = statusCounts["in_execution"] ?? 0;
+  const totalActive = Object.entries(statusCounts)
+    .filter(([s]) => !["closed", "draft"].includes(s))
+    .reduce((sum, [, n]) => sum + n, 0);
+
   return (
     <div className="p-6 sm:p-8">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <h1 className="text-xl font-semibold tracking-tight">
           Panel de Administración
         </h1>
-        <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-200">
-          Datos de ejemplo
-        </span>
+        <Link
+          href="/panel/presupuestos"
+          className="text-sm text-slate-500 hover:text-slate-900 dark:hover:text-white"
+        >
+          Ver presupuestos →
+        </Link>
       </header>
 
+      {/* ── Métricas ──────────────────────────────────────────────── */}
       <section className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <MetricCard
-          label="Ganancia del mes"
-          value={formatMoney(METRICS.monthProfit)}
-          hint="Precio al cliente − costo base"
+          label="Ganancia acumulada"
+          value={formatMoney(totalProfit)}
+          hint="Precio al cliente − costo base (presupuestos con margen)"
           accent
         />
         <MetricCard
           label="Ingresos facturados"
-          value={formatMoney(METRICS.monthRevenue)}
-          hint="Total a clientes (con margen)"
+          value={formatMoney(totalRevenue)}
+          hint="Total a clientes con margen aplicado"
         />
         <MetricCard
           label="Margen promedio"
-          value={`${METRICS.avgMargin}%`}
-          hint="Sobre el costo base"
+          value={`${avgMargin.toFixed(1)}%`}
+          hint="Sobre el costo base (presupuestos validados)"
         />
         <MetricCard
           label="Presupuestos activos"
-          value={String(METRICS.activeBudgets)}
-          hint="En cualquier etapa del pipeline"
+          value={String(totalActive)}
+          hint="En cualquier etapa del pipeline (excluye borradores y cerrados)"
         />
         <MetricCard
           label="En revisión"
-          value={String(METRICS.pendingReview)}
-          hint="Pendientes de Administración"
+          value={String(pendingReview + pendingManager)}
+          hint={`${pendingReview} en Administración · ${pendingManager} en Gerencia`}
         />
         <MetricCard
-          label="Gastos del mes"
-          value={formatMoney(METRICS.monthExpenses)}
-          hint="Registrados por los trabajadores"
+          label="Gastos en ejecución"
+          value={formatMoney(totalExpenses)}
+          hint={`${inExecution} presupuesto${inExecution !== 1 ? "s" : ""} activo${inExecution !== 1 ? "s" : ""}`}
         />
       </section>
 
-      <section className="mt-10">
-        <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-          Rendimiento por trabajador
-        </h2>
-        <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-900">
-              <tr>
-                <th className="px-4 py-3 font-medium">Trabajador</th>
-                <th className="px-4 py-3 text-right font-medium">Presupuestos</th>
-                <th className="px-4 py-3 text-right font-medium">Aprobado</th>
-                <th className="px-4 py-3 text-right font-medium">Gastos</th>
-                <th className="px-4 py-3 text-right font-medium">Ganancia</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {PER_WORKER.map((w) => (
-                <tr key={w.name}>
-                  <td className="px-4 py-3 font-medium">{w.name}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {w.budgets}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {formatMoney(w.approved)}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {formatMoney(w.expenses)}
-                  </td>
-                  <td className="px-4 py-3 text-right font-medium tabular-nums text-green-600">
-                    {formatMoney(w.profit)}
-                  </td>
-                </tr>
+      {/* ── Distribución por estado ──────────────────────────────── */}
+      {Object.keys(statusCounts).length > 0 && (
+        <section className="mt-10">
+          <h2 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
+            Distribución por estado
+          </h2>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(statusCounts)
+              .sort(([, a], [, b]) => b - a)
+              .map(([status, count]) => (
+                <div
+                  key={status}
+                  className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-800 dark:bg-slate-900"
+                >
+                  <StatusBadge status={status as BudgetStatus} />
+                  <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">
+                    {count}
+                  </span>
+                  <span className="text-slate-400">
+                    {BUDGET_STATUS_LABELS[status as BudgetStatus]}
+                  </span>
+                </div>
               ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+          </div>
+        </section>
+      )}
 
+      {/* ── Presupuestos recientes ───────────────────────────────── */}
       <section className="mt-10">
-        <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-          Presupuestos recientes
-        </h2>
-        <ul className="mt-3 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
-          {RECENT.map((b) => (
-            <li
-              key={b.code}
-              className="flex flex-wrap items-center gap-3 px-4 py-3"
-            >
-              <span className="font-mono text-xs text-slate-400">{b.code}</span>
-              <span className="min-w-0 flex-1 truncate font-medium">
-                {b.title}
-              </span>
-              <span className="text-xs text-slate-500">{b.worker}</span>
-              <StatusBadge status={b.status} />
-              <span className="w-24 text-right font-medium tabular-nums">
-                {formatMoney(b.total)}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+            Presupuestos recientes
+          </h2>
+          <Link
+            href="/panel/presupuestos"
+            className="text-xs text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+          >
+            Ver todos
+          </Link>
+        </div>
+        {(recentBudgets ?? []).length === 0 ? (
+          <p className="text-sm text-slate-400">No hay presupuestos aún.</p>
+        ) : (
+          <ul className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
+            {(recentBudgets ?? []).map((b) => {
+              const creatorName =
+                (b.creator as { full_name: string } | null)?.full_name ?? "—";
+              return (
+                <li key={b.id}>
+                  <Link
+                    href={`/panel/presupuestos/${b.id}`}
+                    className="flex flex-wrap items-center gap-3 px-4 py-3 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                  >
+                    <span className="font-mono text-xs text-slate-400">
+                      {b.code ?? "—"}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate font-medium text-slate-800 dark:text-slate-200">
+                      {b.title}
+                    </span>
+                    <span className="hidden text-xs text-slate-500 sm:block">
+                      {creatorName}
+                    </span>
+                    <StatusBadge status={b.status as BudgetStatus} />
+                    <span className="w-24 text-right text-sm font-medium tabular-nums text-slate-700 dark:text-slate-200">
+                      {formatMoney(b.base_total, b.currency as "USD" | "VES")}
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </section>
-
-      <p className="mt-10 text-xs text-slate-400">
-        Las cifras son de ejemplo. En producción provienen de las vistas{" "}
-        <code>budget_profit</code> y <code>budget_balances</code>, visibles solo
-        para Administración y Gerencia.
-      </p>
     </div>
   );
 }

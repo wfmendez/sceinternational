@@ -32,14 +32,12 @@ export default async function AdminDashboardPage() {
     { data: balances },
     { data: budgetCounts },
     { data: recentBudgets },
+    { data: allBudgetsByWorker },
+    { data: workerExpenses },
   ] = await Promise.all([
-    // Ganancia por presupuesto (solo los que tienen pricing)
     supabase.from("budget_profit").select("profit, client_total, base_total, margin_pct"),
-    // Balance por presupuesto en ejecución
     supabase.from("budget_balances").select("total_expenses, remaining_amount"),
-    // Conteo por estado
     supabase.from("budgets").select("status"),
-    // Presupuestos recientes con info de creador y cliente
     supabase
       .from("budgets")
       .select(
@@ -47,6 +45,15 @@ export default async function AdminDashboardPage() {
       )
       .order("updated_at", { ascending: false })
       .limit(8),
+    // Rendimiento por trabajador: todos los presupuestos con creador
+    supabase
+      .from("budgets")
+      .select("status, base_total, created_by, creator:profiles!budgets_created_by_fkey(full_name, role)")
+      .order("created_by"),
+    // Gastos totales por trabajador (a través del presupuesto)
+    supabase
+      .from("expenses")
+      .select("amount, budget:budgets!expenses_budget_id_fkey(created_by)"),
   ]);
 
   const totalProfit = (profits ?? []).reduce((s, p) => s + (p.profit ?? 0), 0);
@@ -71,6 +78,50 @@ export default async function AdminDashboardPage() {
   const totalActive = Object.entries(statusCounts)
     .filter(([s]) => !["closed", "draft"].includes(s))
     .reduce((sum, [, n]) => sum + n, 0);
+
+  // ── Rendimiento por trabajador ───────────────────────────────────────────
+  type WorkerStat = {
+    name: string;
+    total: number;
+    active: number;
+    closed: number;
+    baseTotal: number;
+    totalSpent: number;
+  };
+
+  // Mapa de gastos totales por creador del presupuesto
+  const spentByWorker: Record<string, number> = {};
+  for (const e of workerExpenses ?? []) {
+    const createdBy = (e.budget as { created_by: string } | null)?.created_by;
+    if (createdBy) {
+      spentByWorker[createdBy] = (spentByWorker[createdBy] ?? 0) + (e.amount ?? 0);
+    }
+  }
+
+  const workerMap: Record<string, WorkerStat> = {};
+  for (const b of allBudgetsByWorker ?? []) {
+    const creator = b.creator as { full_name: string; role: string } | null;
+    if (!creator || creator.role !== "worker") continue;
+    const key = b.created_by;
+    if (!workerMap[key]) {
+      workerMap[key] = {
+        name: creator.full_name,
+        total: 0,
+        active: 0,
+        closed: 0,
+        baseTotal: 0,
+        totalSpent: 0,
+      };
+    }
+    workerMap[key].total += 1;
+    workerMap[key].baseTotal += b.base_total ?? 0;
+    if (b.status === "closed") workerMap[key].closed += 1;
+    else if (b.status !== "draft") workerMap[key].active += 1;
+  }
+  for (const [id, stat] of Object.entries(workerMap)) {
+    stat.totalSpent = spentByWorker[id] ?? 0;
+  }
+  const workerStats = Object.values(workerMap).sort((a, b) => b.total - a.total);
 
   return (
     <div className="p-6 sm:p-8">
@@ -144,6 +195,68 @@ export default async function AdminDashboardPage() {
                   </span>
                 </div>
               ))}
+          </div>
+        </section>
+      )}
+
+      {/* ── Rendimiento por trabajador ──────────────────────────── */}
+      {workerStats.length > 0 && (
+        <section className="mt-10">
+          <h2 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
+            Rendimiento por trabajador
+          </h2>
+          <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+            <table className="w-full min-w-[560px] text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900">
+                  <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-400">
+                    Trabajador
+                  </th>
+                  <th className="w-20 px-3 py-3 text-right font-medium text-slate-600 dark:text-slate-400">
+                    Total
+                  </th>
+                  <th className="w-20 px-3 py-3 text-right font-medium text-slate-600 dark:text-slate-400">
+                    Activos
+                  </th>
+                  <th className="w-20 px-3 py-3 text-right font-medium text-slate-600 dark:text-slate-400">
+                    Cerrados
+                  </th>
+                  <th className="w-32 px-3 py-3 text-right font-medium text-slate-600 dark:text-slate-400">
+                    Costo base
+                  </th>
+                  <th className="w-32 px-3 py-3 text-right font-medium text-slate-600 dark:text-slate-400">
+                    Gastos reales
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {workerStats.map((w) => (
+                  <tr
+                    key={w.name}
+                    className="bg-white dark:bg-slate-950"
+                  >
+                    <td className="px-4 py-3 font-medium text-slate-800 dark:text-slate-200">
+                      {w.name}
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums text-slate-700 dark:text-slate-300">
+                      {w.total}
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums text-slate-700 dark:text-slate-300">
+                      {w.active}
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums text-slate-700 dark:text-slate-300">
+                      {w.closed}
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums text-slate-700 dark:text-slate-300">
+                      {formatMoney(w.baseTotal)}
+                    </td>
+                    <td className={`px-3 py-3 text-right tabular-nums font-medium ${w.totalSpent > 0 ? "text-amber-600 dark:text-amber-400" : "text-slate-400"}`}>
+                      {w.totalSpent > 0 ? formatMoney(w.totalSpent) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </section>
       )}

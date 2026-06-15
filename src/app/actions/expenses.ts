@@ -65,26 +65,67 @@ export async function logExpense(
     comment: `${description.trim()} — ${amount}`,
   });
 
-  // Notificación a admin/manager
+  // Verificar si se superó el techo de gasto
+  const { data: balanceRow } = await supabase
+    .from("budget_balances")
+    .select("remaining_amount")
+    .eq("budget_id", budgetId)
+    .single();
+  const isOverBudget = (balanceRow?.remaining_amount ?? 0) < 0;
+
+  // Notificaciones
   try {
     const adminClient = createAdminClient();
     type NotifType = Database["public"]["Enums"]["notification_type"];
 
-    const { data: recipients } = await adminClient
+    const { data: privileged } = await adminClient
       .from("profiles")
       .select("id")
       .in("role", ["admin", "manager"]);
 
-    if (recipients?.length) {
-      await adminClient.from("notifications").insert(
-        recipients.map((r) => ({
+    const notifRows: {
+      recipient_id: string;
+      budget_id: string;
+      type: NotifType;
+      title: string;
+      body: string;
+    }[] = [];
+
+    const expenseBody = `${description.trim()} — ${amount}`;
+
+    // Siempre notificar a admin/manager del gasto
+    for (const r of privileged ?? []) {
+      notifRows.push({
+        recipient_id: r.id,
+        budget_id: budgetId,
+        type: "expense_logged",
+        title: `Gasto registrado: ${budget.title}`,
+        body: expenseBody,
+      });
+    }
+
+    // Si el saldo es negativo, notificar también al trabajador y a admin/manager
+    if (isOverBudget) {
+      notifRows.push({
+        recipient_id: user.id,
+        budget_id: budgetId,
+        type: "expense_over_budget",
+        title: `Saldo negativo: ${budget.title}`,
+        body: "Los gastos acumulados superan el techo aprobado.",
+      });
+      for (const r of privileged ?? []) {
+        notifRows.push({
           recipient_id: r.id,
           budget_id: budgetId,
-          type: "expense_logged" as NotifType,
-          title: `Gasto registrado: ${budget.title}`,
-          body: `${description.trim()} — ${amount}`,
-        })),
-      );
+          type: "expense_over_budget",
+          title: `Saldo negativo: ${budget.title}`,
+          body: "Los gastos superan el techo aprobado.",
+        });
+      }
+    }
+
+    if (notifRows.length) {
+      await adminClient.from("notifications").insert(notifRows);
     }
   } catch {
     // las notificaciones no bloquean el registro

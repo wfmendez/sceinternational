@@ -4,6 +4,9 @@ import { notFound, redirect } from "next/navigation";
 
 import { StatusBadge } from "@/components/ui/badge";
 import TransitionActions from "@/components/budgets/transition-actions";
+import BalanceCard from "@/components/expenses/balance-card";
+import ExpenseForm from "@/components/expenses/expense-form";
+import ExpenseList from "@/components/expenses/expense-list";
 import {
   BUDGET_STATUS_LABELS,
   type BudgetStatus,
@@ -23,6 +26,9 @@ const PRICED_STATUSES: BudgetStatus[] = [
   "in_execution",
   "closed",
 ];
+
+/** Estados donde aplica mostrar gastos y balance. */
+const EXECUTION_STATUSES: BudgetStatus[] = ["in_execution", "closed"];
 
 export const metadata: Metadata = { title: "Detalle del presupuesto" };
 
@@ -102,6 +108,50 @@ export default async function PresupuestoDetailPage({
 
   const showPdfButton =
     isPrivileged(profile.role as UserRole) && PRICED_STATUSES.includes(status);
+
+  const isInExecution = EXECUTION_STATUSES.includes(status);
+  const canRegisterExpense =
+    status === "in_execution" && budget.created_by === user.id;
+
+  // Balance y gastos (solo cuando el presupuesto está en ejecución o cerrado)
+  const [balanceResult, expensesResult] = isInExecution
+    ? await Promise.all([
+        supabase
+          .from("budget_balances")
+          .select("approved_purchase_amount, total_expenses, remaining_amount")
+          .eq("budget_id", id)
+          .single(),
+        supabase
+          .from("expenses")
+          .select(
+            "id, description, amount, invoice_ref, invoice_file_path, note, created_at, creator:profiles!expenses_created_by_fkey(full_name)",
+          )
+          .eq("budget_id", id)
+          .order("created_at", { ascending: false }),
+      ])
+    : [{ data: null }, { data: [] }];
+
+  const balance = balanceResult.data;
+  const rawExpenses = expensesResult.data ?? [];
+
+  // Generar URLs firmadas para facturas adjuntas (expiran en 1h)
+  const expensesWithUrls = await Promise.all(
+    rawExpenses.map(async (e) => {
+      let invoice_url: string | null = null;
+      if (e.invoice_file_path) {
+        const { data } = await supabase.storage
+          .from("invoices")
+          .createSignedUrl(e.invoice_file_path, 3600);
+        invoice_url = data?.signedUrl ?? null;
+      }
+      return {
+        ...e,
+        invoice_url,
+        creator_name:
+          (e.creator as { full_name: string } | null)?.full_name ?? null,
+      };
+    }),
+  );
 
   return (
     <div className="p-6 sm:p-8">
@@ -262,6 +312,16 @@ export default async function PresupuestoDetailPage({
           </div>
         </section>
 
+        {/* Balance de ejecución */}
+        {isInExecution && balance && (
+          <BalanceCard
+            approvedAmount={balance.approved_purchase_amount ?? budget.base_total}
+            totalExpenses={balance.total_expenses ?? 0}
+            remainingAmount={balance.remaining_amount ?? 0}
+            currency={currency}
+          />
+        )}
+
         {/* Acciones de transición */}
         <TransitionActions
           budgetId={id}
@@ -270,6 +330,25 @@ export default async function PresupuestoDetailPage({
           baseTotal={budget.base_total}
           currency={currency}
         />
+
+        {/* Sección de gastos */}
+        {isInExecution && (
+          <section className="space-y-4">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Gastos
+            </h2>
+
+            {canRegisterExpense && (
+              <ExpenseForm budgetId={id} currency={currency} />
+            )}
+
+            <ExpenseList
+              expenses={expensesWithUrls}
+              currency={currency}
+              showCreator={isPrivileged(profile.role as UserRole)}
+            />
+          </section>
+        )}
 
         {/* Bitácora de eventos */}
         {events.length > 0 && (

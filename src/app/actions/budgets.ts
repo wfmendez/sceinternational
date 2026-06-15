@@ -289,6 +289,12 @@ export async function transitionBudget(
     updates.submitted_at = new Date().toISOString();
   if (toStatus === "validated_with_margin")
     updates.validated_at = new Date().toISOString();
+  if (toStatus === "approved_sent_to_client")
+    updates.manager_approved_at = new Date().toISOString();
+  if (toStatus === "client_approved")
+    updates.client_approved_at = new Date().toISOString();
+  if (toStatus === "in_execution")
+    updates.approved_purchase_amount = budget.base_total;
 
   const { error: updateError } = await supabase
     .from("budgets")

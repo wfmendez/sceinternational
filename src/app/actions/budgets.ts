@@ -252,7 +252,7 @@ export async function transitionBudget(
   budgetId: string,
   toStatus: BudgetStatus,
   comment?: string,
-): Promise<{ error?: string }> {
+): Promise<{ error?: string; emailSent?: boolean; noClientEmail?: boolean }> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -268,7 +268,7 @@ export async function transitionBudget(
 
   const { data: budget } = await supabase
     .from("budgets")
-    .select("status, created_by, title, base_total, currency")
+    .select("status, created_by, title, code, base_total, currency")
     .eq("id", budgetId)
     .single();
   if (!budget) return { error: "Presupuesto no encontrado" };
@@ -316,6 +316,9 @@ export async function transitionBudget(
   await notifyTransition(budgetId, budget.title, budget.created_by, toStatus);
 
   // Correo al cliente cuando el presupuesto es aprobado y enviado
+  let emailSent = false;
+  let noClientEmail = false;
+
   if (toStatus === "approved_sent_to_client") {
     try {
       const { data: clientRow } = await supabase
@@ -328,10 +331,11 @@ export async function transitionBudget(
         | { name: string; contact_email: string | null }
         | null;
 
-      if (client?.contact_email) {
+      if (!client?.contact_email) {
+        noClientEmail = true;
+      } else {
         const pricingResult = await renderBudgetPdfById(supabase, budgetId);
         if (pricingResult) {
-          // Obtener precio al cliente desde budget_pricing
           const { data: pricingData } = await supabase
             .from("budget_pricing")
             .select("client_total")
@@ -340,13 +344,14 @@ export async function transitionBudget(
 
           await sendBudgetEmail({
             to: client.contact_email,
-            budgetCode: budget.title, // se sobreescribe abajo si hay code
+            budgetCode: budget.code ?? budget.title,
             budgetTitle: budget.title,
             clientName: client.name,
             currency: budget.currency as "USD" | "VES",
             clientTotal: pricingData?.client_total ?? budget.base_total,
             pdfBuffer: pricingResult.buffer,
           });
+          emailSent = true;
         }
       }
     } catch {
@@ -356,7 +361,7 @@ export async function transitionBudget(
 
   revalidatePath("/panel/presupuestos");
   revalidatePath(`/panel/presupuestos/${budgetId}`);
-  return {};
+  return { emailSent: emailSent || undefined, noClientEmail: noClientEmail || undefined };
 }
 
 // ─── Validar con margen (Fase 2) ─────────────────────────────────────────────

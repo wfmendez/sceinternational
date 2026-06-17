@@ -16,9 +16,9 @@ interface TransitionActionsProps {
   budgetId: string;
   status: BudgetStatus;
   role: UserRole;
-  /** Necesario para mostrar el formulario de margen. */
   baseTotal?: number;
   currency?: Currency;
+  clientEmail?: string | null;
 }
 
 const TONE_CLASSES: Record<string, string> = {
@@ -42,15 +42,19 @@ const TONE_CLASSES: Record<string, string> = {
 function ActionButton({
   transition,
   budgetId,
+  clientEmail,
 }: {
   transition: BudgetTransition;
   budgetId: string;
+  clientEmail?: string | null;
 }) {
   const [showComment, setShowComment] = useState(false);
   const [comment, setComment] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
+  const isSendToClient = transition.to === "approved_sent_to_client";
   const toneClass =
     TONE_CLASSES[transition.action] ??
     "bg-slate-900 text-white hover:bg-slate-700";
@@ -61,13 +65,26 @@ function ActionButton({
       return;
     }
     setError(null);
+    setSuccessMsg(null);
     startTransition(async () => {
       const result = await transitionBudget(
         budgetId,
         transition.to,
         comment.trim() || undefined,
       );
-      if (result?.error) setError(result.error);
+      if (result?.error) {
+        setError(result.error);
+      } else if (isSendToClient) {
+        if (result?.emailSent) {
+          setSuccessMsg("Presupuesto enviado · correo enviado al cliente ✓");
+        } else if (result?.noClientEmail) {
+          setSuccessMsg(
+            "Presupuesto aprobado · el cliente no tiene correo registrado, descarga el PDF y envíalo manualmente.",
+          );
+        } else {
+          setSuccessMsg("Presupuesto aprobado y enviado al cliente.");
+        }
+      }
     });
   };
 
@@ -107,7 +124,14 @@ function ActionButton({
   }
 
   return (
-    <div>
+    <div className="space-y-2">
+      {/* Aviso preventivo si falta correo del cliente */}
+      {isSendToClient && !clientEmail && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-400">
+          El cliente no tiene correo registrado. El presupuesto se aprobará pero
+          el PDF tendrás que enviarlo manualmente.
+        </p>
+      )}
       <button
         onClick={() => {
           if (transition.requiresComment) {
@@ -121,7 +145,12 @@ function ActionButton({
       >
         {isPending ? "Procesando…" : transition.action}
       </button>
-      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+      {error && <p className="text-xs text-red-600">{error}</p>}
+      {successMsg && (
+        <p className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700 dark:border-green-800 dark:bg-green-900/20 dark:text-green-400">
+          {successMsg}
+        </p>
+      )}
     </div>
   );
 }
@@ -132,13 +161,13 @@ export default function TransitionActions({
   role,
   baseTotal = 0,
   currency = "USD",
+  clientEmail,
 }: TransitionActionsProps) {
   const transitions = allowedTransitions(status, role);
   const [showMarginForm, setShowMarginForm] = useState(false);
 
   if (!transitions.length) return null;
 
-  // Separar la transición de validar margen del resto
   const validateTransition = transitions.find(
     (t) => t.to === "validated_with_margin",
   );
@@ -152,7 +181,6 @@ export default function TransitionActions({
         Acciones disponibles
       </h3>
 
-      {/* Formulario de margen (expansible) */}
       {validateTransition && (
         <div>
           {showMarginForm ? (
@@ -173,11 +201,15 @@ export default function TransitionActions({
         </div>
       )}
 
-      {/* Resto de transiciones */}
       {otherTransitions.length > 0 && (
         <div className="flex flex-wrap gap-3">
           {otherTransitions.map((t) => (
-            <ActionButton key={t.to} transition={t} budgetId={budgetId} />
+            <ActionButton
+              key={t.to}
+              transition={t}
+              budgetId={budgetId}
+              clientEmail={clientEmail}
+            />
           ))}
         </div>
       )}

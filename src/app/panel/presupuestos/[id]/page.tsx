@@ -27,6 +27,13 @@ const PRICED_STATUSES: BudgetStatus[] = [
   "closed",
 ];
 
+/** Admin/manager pueden descargar PDF desde revisión (aunque no haya margen aún). */
+const PDF_VISIBLE_STATUSES: BudgetStatus[] = [
+  "pending_admin_review",
+  "returned_to_worker",
+  ...PRICED_STATUSES,
+];
+
 /** Estados donde aplica mostrar gastos y balance. */
 const EXECUTION_STATUSES: BudgetStatus[] = ["in_execution", "closed"];
 
@@ -66,7 +73,7 @@ export default async function PresupuestoDetailPage({
       id, code, title, status, currency, base_total, description,
       created_at, submitted_at, validated_at, created_by,
       creator:profiles!budgets_created_by_fkey(full_name),
-      client:clients!budgets_client_id_fkey(name),
+      client:clients!budgets_client_id_fkey(name, contact_email),
       items:budget_items(id, description, quantity, unit_cost, unit, line_total, sort_order),
       events:budget_events(id, event_type, from_status, to_status, comment, created_at, actor:profiles!budget_events_actor_id_fkey(full_name)),
       pricing:budget_pricing(client_total, margin_pct)
@@ -93,8 +100,11 @@ export default async function PresupuestoDetailPage({
 
   const creatorName =
     (budget.creator as { full_name: string } | null)?.full_name ?? "—";
-  const clientName =
-    (budget.client as { name: string } | null)?.name ?? null;
+  const clientRaw = budget.client as
+    | { name: string; contact_email: string | null }
+    | null;
+  const clientName = clientRaw?.name ?? null;
+  const clientEmail = clientRaw?.contact_email ?? null;
 
   // Precio al cliente (solo admin/manager, solo cuando existe pricing)
   const pricingArr = budget.pricing as
@@ -107,7 +117,8 @@ export default async function PresupuestoDetailPage({
     pricing !== null;
 
   const showPdfButton =
-    isPrivileged(profile.role as UserRole) && PRICED_STATUSES.includes(status);
+    isPrivileged(profile.role as UserRole) &&
+    PDF_VISIBLE_STATUSES.includes(status);
 
   const isInExecution = EXECUTION_STATUSES.includes(status);
   const canRegisterExpense =
@@ -329,6 +340,7 @@ export default async function PresupuestoDetailPage({
           role={profile.role as UserRole}
           baseTotal={budget.base_total}
           currency={currency}
+          clientEmail={clientEmail}
         />
 
         {/* Sección de gastos */}
